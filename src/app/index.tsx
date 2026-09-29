@@ -1,122 +1,150 @@
 // src/app/index.tsx
-import { useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
 import {
+  Alert,
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
+  StyleSheet, Text,
   TouchableOpacity,
   View
 } from 'react-native';
-import { sendMessageToGemini } from '../gemini';
+import { Conversation, createConversation, deleteConversation, getConversations } from '../storage';
 
-// تعريف نوع الرسالة لحل مشكلة TypeScript
-type Message = {
-  id: string;
-  text: string;
-  sender: 'user' | 'bot';
-};
+export default function HomeScreen() {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const router = useRouter();
 
-export default function App() {
-  const [messages, setMessages] = useState<Message[]>([
-    { id: '1', text: 'أهلاً! أنا مساعدك الدراسي. اسألني أي شي.', sender: 'bot' }
-  ]);
-  const [inputText, setInputText] = useState('');
+  useFocusEffect(
+    useCallback(() => {
+      loadConversations();
+    }, [])
+  );
 
-  const sendMessage = async () => {
-    if (inputText.trim() === '') return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      text: inputText,
-      sender: 'user',
-    };
-    
-    // إضافة رسالة المستخدم
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
-    setInputText('');
-
-    // إضافة رسالة "جاري التفكير"
-    const loadingMessage: Message = {
-      id: (Date.now() + 1).toString(),
-      text: '...جاري التفكير',
-      sender: 'bot',
-    };
-    setMessages([...updatedMessages, loadingMessage]);
-
-    // جلب الرد من Groq API
-    const botReply = await sendMessageToGemini(inputText);
-
-    // استبدال رسالة "جاري التفكير" بالرد الحقيقي
-    setMessages(prev => {
-      const filtered = prev.filter(m => m.id !== loadingMessage.id);
-      return [...filtered, {
-        id: (Date.now() + 2).toString(),
-        text: botReply,
-        sender: 'bot',
-      }];
-    });
+  const loadConversations = async () => {
+    const data = await getConversations();
+    setConversations(data);
   };
 
-  const renderMessage = ({ item }: { item: Message }) => (
-    <View style={[
-      styles.messageBubble,
-      item.sender === 'user' ? styles.userBubble : styles.botBubble
-    ]}>
-      <Text style={item.sender === 'user' ? styles.userText : styles.botText}>
-        {item.text}
-      </Text>
-    </View>
+  const handleNewChat = async () => {
+    const newConv = await createConversation();
+    router.push(`/chat/${newConv.id}`);
+  };
+
+  const handleDelete = (id: string) => {
+    Alert.alert(
+      'حذف المحادثة',
+      'هل أنت متأكد من حذف هذه المحادثة؟',
+      [
+        { text: 'إلغاء', style: 'cancel' },
+        { 
+          text: 'حذف', 
+          style: 'destructive',
+          onPress: async () => {
+            await deleteConversation(id);
+            loadConversations();
+          }
+        },
+      ]
+    );
+  };
+
+  const renderItem = ({ item }: { item: Conversation }) => (
+    <TouchableOpacity 
+      style={styles.conversationItem}
+      onPress={() => router.push(`/chat/${item.id}`)}
+      onLongPress={() => handleDelete(item.id)}
+    >
+      <View style={styles.conversationContent}>
+        <Text style={styles.conversationTitle} numberOfLines={1}>
+          {item.title}
+        </Text>
+        <Text style={styles.conversationDate}>
+          {new Date(item.updatedAt).toLocaleDateString('ar-EG')}
+        </Text>
+      </View>
+      <Text style={styles.arrow}>‹</Text>
+    </TouchableOpacity>
   );
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerText}>📚 مساعدك الدراسي</Text>
       </View>
 
-      <FlatList
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.messagesList}
-      />
-
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.input}
-          value={inputText}
-          onChangeText={setInputText}
-          placeholder="اكتب سؤالك هنا..."
-          placeholderTextColor="#999"
-          multiline
+      {conversations.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>لا توجد محادثات بعد</Text>
+          <Text style={styles.emptySubtext}>اضغط على الزر أدناه لبدء محادثة جديدة</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={conversations}
+          renderItem={renderItem}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.list}
         />
-        <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
-          <Text style={styles.sendButtonText}>إرسال</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+      )}
+
+      <TouchableOpacity style={styles.newChatButton} onPress={handleNewChat}>
+        <Text style={styles.newChatButtonText}>+ محادثة جديدة</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { paddingTop: 50, paddingBottom: 15, backgroundColor: '#007AFF', alignItems: 'center' },
+  header: { 
+    paddingTop: 50, 
+    paddingBottom: 15, 
+    backgroundColor: '#007AFF', 
+    alignItems: 'center',
+  },
   headerText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  messagesList: { padding: 15 },
-  messageBubble: { padding: 12, borderRadius: 15, marginBottom: 10, maxWidth: '80%' },
-  userBubble: { backgroundColor: '#007AFF', alignSelf: 'flex-end' },
-  botBubble: { backgroundColor: '#fff', alignSelf: 'flex-start', borderWidth: 1, borderColor: '#e0e0e0' },
-  userText: { color: '#fff', fontSize: 16 },
-  botText: { color: '#000', fontSize: 16 },
-  inputContainer: { flexDirection: 'row', padding: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e0e0e0' },
-  input: { flex: 1, backgroundColor: '#f0f0f0', borderRadius: 20, paddingHorizontal: 15, paddingVertical: 10, fontSize: 16, maxHeight: 100, textAlign: 'right' },
-  sendButton: { backgroundColor: '#007AFF', borderRadius: 20, paddingHorizontal: 20, justifyContent: 'center', marginLeft: 10 },
-  sendButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  list: { padding: 15, paddingBottom: 100 },
+  conversationItem: {
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  conversationContent: { flex: 1 },
+  conversationTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 5,
+    textAlign: 'right',
+  },
+  conversationDate: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'right',
+  },
+  arrow: { fontSize: 24, color: '#ccc', marginLeft: 10 },
+  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyText: { fontSize: 18, color: '#666', marginBottom: 10 },
+  emptySubtext: { fontSize: 14, color: '#999' },
+  newChatButton: {
+    position: 'absolute',
+    bottom: 30,
+    left: 20,
+    right: 20,
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 25,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 5,
+  },
+  newChatButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });
